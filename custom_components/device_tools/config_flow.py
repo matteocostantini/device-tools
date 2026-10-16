@@ -237,8 +237,15 @@ def _get_entity_schema(
     )
 
 
-def _get_merge_schema(merge_device_ids: list[str]) -> vol.Schema:
+def _get_merge_schema(hass: HomeAssistant, merge_device_ids: list[str]) -> vol.Schema:
     """Return the schema of a merge modification."""
+    devices = {
+        device.id: name_for_device(device)
+        for device in dr.async_get(hass).devices.values()
+    }
+    for device_id in merge_device_ids:
+        devices.setdefault(device_id, device_id)
+
     return vol.Schema(
         {
             vol.Optional(CONF_MERGE_OPTIONS): section(
@@ -247,8 +254,16 @@ def _get_merge_schema(merge_device_ids: list[str]) -> vol.Schema:
                         vol.Required(
                             CONF_MERGE_DEVICE_IDS,
                             description={"suggested_value": merge_device_ids},
-                        ): selector.DeviceSelector(
-                            selector.DeviceSelectorConfig(multiple=True)
+                        ): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=[
+                                    selector.SelectOptionDict(value=device_id, label=name)
+                                    for device_id, name in devices.items()
+                                ],
+                                multiple=True,
+                                mode=selector.SelectSelectorMode.DROPDOWN,
+                                sort=True,
+                            )
                         ),
                     }
                 )
@@ -275,7 +290,9 @@ def _get_modification_schema(
         case ModificationType.ENTITY:
             schema = _get_entity_schema(modification_data, original_data)
         case ModificationType.MERGE:
-            schema = _get_merge_schema(modification_data.get(CONF_MERGE_DEVICE_IDS, []))
+            schema = _get_merge_schema(
+                hass, modification_data.get(CONF_MERGE_DEVICE_IDS, [])
+            )
     if not information or modification_entry_id is None:
         return schema
     return schema.extend(_get_information_schema(mod_type, modification_entry_id))
@@ -573,7 +590,7 @@ class DeviceToolsConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="merge_devices",
-            data_schema=_get_merge_schema(merge_device_ids),
+            data_schema=_get_merge_schema(self.hass, merge_device_ids),
             description_placeholders={"name": self._modification_entry_name},
             errors=errors,
         )
